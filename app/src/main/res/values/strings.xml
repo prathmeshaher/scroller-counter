@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Scroller Counter</string>
+    <string name="service_description">Counts how many Reels / Shorts you swipe through in Instagram, YouTube, TikTok and Facebook. Only the number of swipes is stored, on this device. No content is read or sent anywhere.</string>
+</resources>

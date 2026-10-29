@@ -1,0 +1,86 @@
+package com.scrollercounter
+
+import android.accessibilityservice.AccessibilityService
+import android.content.Intent
+import android.os.SystemClock
+import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
+
+/**
+ * Counts one reel per swipe in a short-video feed.
+ *
+ * A swipe fires a burst of TYPE_VIEW_SCROLLED events, so events are debounced.
+ * To avoid counting ordinary feed scrolling, a count only happens while the
+ * screen shows a reels/shorts viewer (detected via view-id hints, which may
+ * need updating when the apps change their layouts).
+ */
+class ReelScrollService : AccessibilityService() {
+
+    private lateinit var store: CounterStore
+    private var lastCountAt = 0L
+
+    override fun onServiceConnected() {
+        store = CounterStore(this)
+    }
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent) {
+        if (event.eventType != AccessibilityEvent.TYPE_VIEW_SCROLLED) return
+        val pkg = event.packageName?.toString() ?: return
+        val hints = VIEWER_HINTS[pkg] ?: return
+
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastCountAt < DEBOUNCE_MS) return
+        // Reel swipes are vertical; ignore horizontal carousels/stories.
+        if (event.scrollDeltaX != 0 && event.scrollDeltaY == 0) return
+
+        val root = rootInActiveWindow ?: return
+        try {
+            if (!showsReelViewer(root, hints)) return
+        } finally {
+            @Suppress("DEPRECATION") root.recycle()
+        }
+
+        lastCountAt = now
+        store.increment(pkg)
+        sendBroadcast(Intent(ACTION_COUNT_CHANGED).setPackage(packageName))
+    }
+
+    private fun showsReelViewer(root: AccessibilityNodeInfo, hints: List<String>): Boolean {
+        var found = false
+        fun walk(node: AccessibilityNodeInfo, depth: Int) {
+            if (found || depth > 12) return
+            val id = node.viewIdResourceName
+            if (id != null && hints.any { id.contains(it, ignoreCase = true) }) {
+                found = true
+                return
+            }
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                walk(child, depth + 1)
+            }
+        }
+        walk(root, 0)
+        return found
+    }
+
+    override fun onInterrupt() = Unit
+
+    companion object {
+        const val ACTION_COUNT_CHANGED = "com.scrollercounter.COUNT_CHANGED"
+        private const val DEBOUNCE_MS = 700L
+
+        val APP_NAMES = mapOf(
+            "com.instagram.android" to "Instagram Reels",
+            "com.google.android.youtube" to "YouTube Shorts",
+            "com.zhiliaoapp.musically" to "TikTok",
+            "com.facebook.katana" to "Facebook Reels",
+        )
+
+        private val VIEWER_HINTS = mapOf(
+            "com.instagram.android" to listOf("clips_viewer", "clips_video"),
+            "com.google.android.youtube" to listOf("reel_recycler", "reel_player", "shorts"),
+            "com.zhiliaoapp.musically" to listOf("viewpager", "feed"),
+            "com.facebook.katana" to listOf("reels", "video_home_viewer"),
+        )
+    }
+}
