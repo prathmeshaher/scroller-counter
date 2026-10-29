@@ -19,3 +19,10 @@ Then open the app, tap **Open Accessibility settings**, and enable *Scroller Cou
 - Android only: iOS does not allow apps to observe other apps.
 - Detection relies on view-id hints in `VIEWER_HINTS`; app updates can break them, so
   counts are approximate and the hints may need tweaking per app version.
+
+## Privacy: fully offline
+- The manifest has no `INTERNET` permission (explicitly removed with `tools:node="remove"`), so Android blocks all network access for this app.
+- Cloud backup and device transfer are disabled (`allowBackup=false`, data extraction rules exclude everything).
+- No analytics or third-party SDKs; the only dependencies are AndroidX core/appcompat.
+- CI fails the build if the merged manifest ever contains a network permission.
+- You can verify on your phone: Settings > Apps > Scroller Counter > Permissions shows none.

@@ -12,6 +12,12 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: 8.9 }
       - run: gradle assembleDebug
+      - name: Verify app is offline (no network permission in merged manifest)
+        run: |
+          M=$(find app/build -name AndroidManifest.xml -path '*merged_manifests/debug*' | head -1)
+          echo "Checking $M"
+          if grep -Eq 'android.permission.(INTERNET|ACCESS_NETWORK_STATE)' "$M"; then
+            echo "Network permission found"; exit 1; fi
       - uses: actions/upload-artifact@v4
         with:
           name: scroller-counter-debug
