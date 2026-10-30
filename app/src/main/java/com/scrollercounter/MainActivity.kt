@@ -6,7 +6,10 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import android.provider.Settings
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.widget.Button
+import android.widget.Toast
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -35,6 +38,11 @@ class MainActivity : AppCompatActivity() {
 
         findViewById<Button>(R.id.enable).setOnClickListener {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+        findViewById<Button>(R.id.copyDebug).setOnClickListener {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("debug", DebugLog.dump()))
+            Toast.makeText(this, "Copied ${DebugLog.size()} lines", Toast.LENGTH_SHORT).show()
         }
         findViewById<Button>(R.id.reset).setOnClickListener {
             AlertDialog.Builder(this)
@@ -68,6 +76,7 @@ class MainActivity : AppCompatActivity() {
         breakdown.text = ReelScrollService.APP_NAMES.entries.joinToString("\n") { (pkg, name) ->
             "$name: ${store.forApp(pkg)}"
         }
+        findViewById<TextView>(R.id.debugInfo).text = "Debug events logged: ${DebugLog.size()}"
         status.text = if (serviceEnabled()) "Tracking is ON" else
             "Tracking is OFF — enable \"Scroller Counter\" in Accessibility settings"
     }

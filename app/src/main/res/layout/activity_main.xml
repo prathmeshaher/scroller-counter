@@ -56,4 +56,18 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="Reset counts" />
+
+    <TextView
+        android:id="@+id/debugInfo"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:textSize="12sp" />
+
+    <Button
+        android:id="@+id/copyDebug"
+        style="?android:attr/buttonBarButtonStyle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Copy debug log" />
 </LinearLayout>

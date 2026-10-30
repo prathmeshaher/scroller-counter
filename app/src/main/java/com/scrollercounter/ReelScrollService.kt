@@ -18,41 +18,56 @@ class ReelScrollService : AccessibilityService() {
 
     private lateinit var store: CounterStore
     private var lastCountAt = 0L
+    private var lastOtherLogAt = 0L
 
     override fun onServiceConnected() {
         store = CounterStore(this)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        if (event.eventType != AccessibilityEvent.TYPE_VIEW_SCROLLED) return
         val pkg = event.packageName?.toString() ?: return
         val hints = VIEWER_HINTS[pkg] ?: return
-
         val now = SystemClock.elapsedRealtime()
-        if (now - lastCountAt < DEBOUNCE_MS) return
-        // Reel swipes are vertical; ignore horizontal carousels/stories.
-        if (event.scrollDeltaX != 0 && event.scrollDeltaY == 0) return
 
-        val root = rootInActiveWindow ?: return
-        try {
-            if (!showsReelViewer(root, hints)) return
-        } finally {
-            @Suppress("DEPRECATION") root.recycle()
+        if (event.eventType != AccessibilityEvent.TYPE_VIEW_SCROLLED) {
+            // Content-change events are noisy; log at most one per second.
+            if (now - lastOtherLogAt >= 1000) {
+                lastOtherLogAt = now
+                DebugLog.add("other ${AccessibilityEvent.eventTypeToString(event.eventType)} ${event.className}")
+            }
+            return
         }
 
+        val root = rootInActiveWindow
+        val ids = LinkedHashSet<String>()
+        val onViewer = if (root != null) showsReelViewer(root, hints, ids) else false
+        val horizontalOnly = event.scrollDeltaX != 0 && event.scrollDeltaY == 0
+        val debounced = now - lastCountAt < DEBOUNCE_MS
+        val counted = onViewer && !horizontalOnly && !debounced
+
+        DebugLog.add(
+            "SCROLL ${pkg.substringAfterLast('.')} cls=${event.className} dX=${event.scrollDeltaX} " +
+                "dY=${event.scrollDeltaY} idx=${event.fromIndex}->${event.toIndex} " +
+                "viewer=$onViewer counted=$counted ids=${ids.joinToString(",")}"
+        )
+
+        if (!counted) return
         lastCountAt = now
         store.increment(pkg)
         sendBroadcast(Intent(ACTION_COUNT_CHANGED).setPackage(packageName))
     }
 
-    private fun showsReelViewer(root: AccessibilityNodeInfo, hints: List<String>): Boolean {
+    private fun showsReelViewer(
+        root: AccessibilityNodeInfo,
+        hints: List<String>,
+        ids: MutableSet<String>,
+    ): Boolean {
         var found = false
         fun walk(node: AccessibilityNodeInfo, depth: Int) {
-            if (found || depth > 12) return
-            val id = node.viewIdResourceName
-            if (id != null && hints.any { id.contains(it, ignoreCase = true) }) {
-                found = true
-                return
+            if (depth > 14 || ids.size >= 60) return
+            node.viewIdResourceName?.let { id ->
+                ids.add(id.substringAfter(":id/"))
+                if (hints.any { id.contains(it, ignoreCase = true) }) found = true
             }
             for (i in 0 until node.childCount) {
                 val child = node.getChild(i) ?: continue
