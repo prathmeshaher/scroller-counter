@@ -70,7 +70,7 @@ class ReelScrollService : AccessibilityService() {
                 val id = node.viewIdResourceName?.substringAfter(":id/").orEmpty()
                 val text = (node.text ?: node.contentDescription)?.toString().orEmpty().take(25)
                 if (id.isNotEmpty() || text.isNotEmpty()) {
-                    out.add("$id|${node.className?.substringAfterLast('.')}|$text")
+                    out.add("$id|${node.className?.toString()?.substringAfterLast('.')}|$text")
                 }
             }
             for (i in 0 until node.childCount) walk(node.getChild(i) ?: continue, depth + 1)
