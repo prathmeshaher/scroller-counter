@@ -30,10 +30,13 @@ class ReelScrollService : AccessibilityService() {
         val now = SystemClock.elapsedRealtime()
 
         if (event.eventType != AccessibilityEvent.TYPE_VIEW_SCROLLED) {
-            // Content-change events are noisy; log at most one per second.
-            if (now - lastOtherLogAt >= 1000) {
+            // Content-change events are noisy; dump the visible screen at most every 700 ms.
+            if (now - lastOtherLogAt >= 700) {
                 lastOtherLogAt = now
-                DebugLog.add("other ${AccessibilityEvent.eventTypeToString(event.eventType)} ${event.className}")
+                DebugLog.add(
+                    "other ${AccessibilityEvent.eventTypeToString(event.eventType)} " +
+                        "${event.className} tree=[${dumpVisible(rootInActiveWindow)}]"
+                )
             }
             return
         }
@@ -55,6 +58,25 @@ class ReelScrollService : AccessibilityService() {
         lastCountAt = now
         store.increment(pkg)
         sendBroadcast(Intent(ACTION_COUNT_CHANGED).setPackage(packageName))
+    }
+
+    /** Debug only: compact list of visible nodes as id|class|text. Stays in memory until copied. */
+    private fun dumpVisible(root: AccessibilityNodeInfo?): String {
+        if (root == null) return "no root"
+        val out = ArrayList<String>()
+        fun walk(node: AccessibilityNodeInfo, depth: Int) {
+            if (depth > 14 || out.size >= 40) return
+            if (node.isVisibleToUser) {
+                val id = node.viewIdResourceName?.substringAfter(":id/").orEmpty()
+                val text = (node.text ?: node.contentDescription)?.toString().orEmpty().take(25)
+                if (id.isNotEmpty() || text.isNotEmpty()) {
+                    out.add("$id|${node.className?.substringAfterLast('.')}|$text")
+                }
+            }
+            for (i in 0 until node.childCount) walk(node.getChild(i) ?: continue, depth + 1)
+        }
+        walk(root, 0)
+        return out.joinToString("; ")
     }
 
     private fun showsReelViewer(
