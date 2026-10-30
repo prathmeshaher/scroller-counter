@@ -9,7 +9,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 /**
  * Counts one reel per swipe in a short-video feed.
  *
- * A swipe fires a burst of TYPE_VIEW_SCROLLED events, so events are debounced.
+ * YouTube is handled separately (see handleYouTube). For the others, a swipe fires a burst of TYPE_VIEW_SCROLLED events, so events are debounced.
  * To avoid counting ordinary feed scrolling, a count only happens while the
  * screen shows a reels/shorts viewer (detected via view-id hints, which may
  * need updating when the apps change their layouts).
@@ -19,6 +19,9 @@ class ReelScrollService : AccessibilityService() {
     private lateinit var store: CounterStore
     private var lastCountAt = 0L
     private var lastOtherLogAt = 0L
+    private var lastYtCheckAt = 0L
+    private var ytInShorts = false
+    private val ytSeen = LinkedHashSet<Int>()
 
     override fun onServiceConnected() {
         store = CounterStore(this)
@@ -26,6 +29,10 @@ class ReelScrollService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val pkg = event.packageName?.toString() ?: return
+        if (pkg == YOUTUBE) {
+            handleYouTube(event)
+            return
+        }
         val hints = VIEWER_HINTS[pkg] ?: return
         val now = SystemClock.elapsedRealtime()
 
@@ -58,6 +65,73 @@ class ReelScrollService : AccessibilityService() {
         lastCountAt = now
         store.increment(pkg)
         sendBroadcast(Intent(ACTION_COUNT_CHANGED).setPackage(packageName))
+    }
+
+    /**
+     * YouTube Shorts sends no scroll events, only content-change events. Instead, look at the
+     * texts inside the Shorts pager (channel handle, caption, ad name) and count a reel when
+     * texts appear that were not seen before. Only text hashes are kept, in memory.
+     */
+    private fun handleYouTube(event: AccessibilityEvent) {
+        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
+            event.eventType != AccessibilityEvent.TYPE_VIEW_SCROLLED
+        ) return
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastYtCheckAt < YT_CHECK_MS) return
+        lastYtCheckAt = now
+
+        val root = rootInActiveWindow ?: return
+        val pager = root.findAccessibilityNodeInfosByViewId("$YOUTUBE:id/reel_recycler")
+            .firstOrNull()
+        if (pager == null) {
+            ytInShorts = false
+            return
+        }
+
+        val tokens = reelTokens(pager)
+        if (tokens.isEmpty()) return
+
+        if (!ytInShorts) {
+            // Entering Shorts: the first reel is the starting point, not a swipe.
+            ytInShorts = true
+            ytSeen.addAll(tokens)
+            DebugLog.add("YT entered shorts, baseline tokens=${tokens.size}")
+            return
+        }
+
+        val fresh = tokens.filter { it !in ytSeen }
+        if (fresh.isEmpty()) return
+        ytSeen.addAll(fresh)
+        while (ytSeen.size > MAX_SEEN) ytSeen.remove(ytSeen.first())
+
+        val counted = now - lastCountAt >= COUNT_DEBOUNCE_MS
+        DebugLog.add("YT new reel text fresh=${fresh.size} of ${tokens.size} counted=$counted")
+        if (!counted) return
+        lastCountAt = now
+        store.increment(YOUTUBE)
+        sendBroadcast(Intent(ACTION_COUNT_CHANGED).setPackage(packageName))
+    }
+
+    /** Hashes of identifying texts (not buttons, counters or generic labels) under [pager]. */
+    private fun reelTokens(pager: AccessibilityNodeInfo): List<Int> {
+        val out = ArrayList<Int>()
+        var visited = 0
+        fun walk(node: AccessibilityNodeInfo, depth: Int) {
+            if (depth > 20 || ++visited > 300) return
+            if (node.isVisibleToUser) {
+                val cls = node.className?.toString().orEmpty()
+                if (cls.endsWith("ViewGroup") || cls.endsWith("ImageView")) {
+                    val text = (node.text ?: node.contentDescription)?.toString()?.trim().orEmpty()
+                    if (text.length >= 3 && text.lowercase() !in GENERIC_TEXTS &&
+                        !text.startsWith("Subscribe", ignoreCase = true) &&
+                        !NUMERIC_TEXT.matches(text)
+                    ) out.add(text.hashCode())
+                }
+            }
+            for (i in 0 until node.childCount) walk(node.getChild(i) ?: continue, depth + 1)
+        }
+        walk(pager, 0)
+        return out
     }
 
     /** Debug only: compact list of visible nodes as id|class|text. Stays in memory until copied. */
@@ -105,6 +179,15 @@ class ReelScrollService : AccessibilityService() {
     companion object {
         const val ACTION_COUNT_CHANGED = "com.scrollercounter.COUNT_CHANGED"
         private const val DEBOUNCE_MS = 700L
+        private const val COUNT_DEBOUNCE_MS = 600L
+        private const val YT_CHECK_MS = 250L
+        private const val MAX_SEEN = 400
+        private const val YOUTUBE = "com.google.android.youtube"
+
+        private val GENERIC_TEXTS = setOf(
+            "ad", "sponsored", "auto-dubbed", "action menu", "shop now", "install", "more actions",
+        )
+        private val NUMERIC_TEXT = Regex("^[\\d.,/]+(\\s\\w+)?$")
 
         val APP_NAMES = mapOf(
             "com.instagram.android" to "Instagram Reels",
@@ -115,7 +198,6 @@ class ReelScrollService : AccessibilityService() {
 
         private val VIEWER_HINTS = mapOf(
             "com.instagram.android" to listOf("clips_viewer", "clips_video"),
-            "com.google.android.youtube" to listOf("reel_recycler", "reel_player", "shorts"),
             "com.zhiliaoapp.musically" to listOf("viewpager", "feed"),
             "com.facebook.katana" to listOf("reels", "video_home_viewer"),
         )
